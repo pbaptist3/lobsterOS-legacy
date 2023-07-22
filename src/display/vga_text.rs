@@ -1,9 +1,11 @@
 use volatile::Volatile;
 use core::fmt;
+use core::fmt::Write;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use x86_64::instructions::interrupts;
 use crate::serial_println;
+
 
 const VGA_BUFFER: *mut u16 = 0xb8000 as *mut u16;
 const BUFFER_WIDTH: usize = 80;
@@ -27,13 +29,10 @@ macro_rules! println {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    crate::display::serial::_print(args);
-
     // ensure that interrupt does not cause deadlock with mutex
-    //interrupts::without_interrupts(|| {
-    //    WRITER.lock().write_fmt(args).unwrap();
-    //});
+    interrupts::without_interrupts(|| {
+        WRITER.lock().write_fmt(args).unwrap();
+    });
 }
 
 #[derive(Debug, Copy, Clone)]

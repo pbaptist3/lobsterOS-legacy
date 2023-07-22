@@ -6,7 +6,7 @@ use x86_64::VirtAddr;
 use fixed_block::FixedBlockAlloc;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 0x100 * 0x1000;
+pub const HEAP_SIZE: usize = 0x200 * 0x1000;
 
 #[global_allocator]
 static ALLOCATOR: Locked<FixedBlockAlloc> = Locked::new(FixedBlockAlloc::new());

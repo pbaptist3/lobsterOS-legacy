@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 const STACK_SIZE: usize = 1024 * 16;
 
 pub struct Thread {
-    code: Box<dyn Fn() -> ()>,
+    code: Box<dyn Fn()>,
     stack: Box<[u8]>,
     state: State,
 }
@@ -13,7 +13,7 @@ impl Thread {
     /// Thread begins in a ready state
     pub fn new<T>(code: T) -> Self
     where
-        T: Fn() -> () + 'static,
+        T: Fn() + 'static,
     {
         Self {
             code: Box::new(code),

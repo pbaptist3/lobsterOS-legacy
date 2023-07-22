@@ -1,15 +1,18 @@
-use futures_util::future::err;
+
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::{gdt, hlt_loop, println, serial_println};
+use crate::threading::scheduler::SCHEDULER;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use pic8259::ChainedPics;
+use x86_64::instructions::port::Port;
 
 pub const PIC_1_OFFSET: u8 = 32;
-pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+pub const TIMER_FREQUENCY: u32 = 1073;
+const TIMER_FREQUENCY_BASE: u32 = 1193182;
 
 pub static PICS: Mutex<ChainedPics> = Mutex::new(unsafe {
-    ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET)
+    ChainedPics::new_contiguous(PIC_1_OFFSET)
 });
 
 lazy_static! {
@@ -49,6 +52,12 @@ impl InterruptIndex {
 }
 
 pub fn init_idt() {
+    // set timer frequency
+    let mut timer_port = Port::new(0x40);
+    unsafe {
+        timer_port.write(TIMER_FREQUENCY_BASE / TIMER_FREQUENCY);
+    }
+
     IDT.load();
 }
 
@@ -98,6 +107,8 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
+
+    SCHEDULER.lock().tick();
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
@@ -121,10 +132,12 @@ extern "x86-interrupt" fn page_fault_handler(
 {
     use x86_64::registers::control::Cr2;
 
-    println!("PAGE FAULT EXCEPTION");
-    println!("Address: {:?}", Cr2::read());
-    println!("Error Code: {:?}", error_code);
-    println!("{:#?}", stack_frame);
+    serial_println!(
+        "PAGE FAULT EXCEPTION\nAddress: {:?}\nError Code: {:?}\n{:#?}",
+        Cr2::read(),
+        error_code,
+        stack_frame
+    );
 
     hlt_loop();
 }

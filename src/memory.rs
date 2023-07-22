@@ -3,16 +3,15 @@ use x86_64::{PhysAddr, VirtAddr};
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 
 /// Initialize physical memory offset page table
-///
-/// Precondition: all of physical memory must be mapped into
-/// virtual memory at physical_memory_offset
-pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
-    let level_4_table = active_level_4_table(physical_memory_offset);
-    OffsetPageTable::new(level_4_table, physical_memory_offset)
+pub unsafe fn init() -> OffsetPageTable<'static> {
+    let phys_offset = crate::BootInfo.get()
+        .expect("boot info not initialized")
+        .physical_memory_offset;
+    let level_4_table = active_level_4_table(phys_offset);
+    OffsetPageTable::new(level_4_table, VirtAddr::new(phys_offset))
 }
 
-pub unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
-    -> &'static mut PageTable
+pub unsafe fn active_level_4_table(physical_memory_offset: u64) -> &'static mut PageTable
 {
     use x86_64::registers::control::Cr3;
 

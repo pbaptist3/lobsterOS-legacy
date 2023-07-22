@@ -1,9 +1,25 @@
+use alloc::ffi::CString;
 use core::arch::asm;
-use crate::{println, serial_println};
 
 pub unsafe fn example_process() {
     loop {}
-    asm!("\
+    let print = |text: &[u8]| {
+        asm!(
+            "mov rax, 0x0
+            mov rdi, {0}
+            mov rsi, {1}
+            syscall",
+            in(reg) text.as_ptr() as u64,
+            in(reg) text.len()
+        );
+    };
+    let mut count = 0;
+    loop {
+        count += 1;
+        print(b"test");
+    }
+    //loop {}
+    /*asm!("\
         mov rax, 0x02
         mov rdi, 0x04
         mov rsi, 0x08
@@ -21,8 +37,9 @@ pub unsafe fn example_process() {
         mov rdx, 0x18
         mov r10, rcx
         syscall
+        nop
     ", in("rcx") c);
     loop {
         x86_64::instructions::hlt();
-    }
+    }*/
 }

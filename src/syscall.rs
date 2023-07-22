@@ -1,12 +1,10 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
+mod display;
+
 use core::alloc::Layout;
 use core::arch::asm;
-use x86_64::registers::model_specific::{LStar, Msr};
-use x86_64::registers::rflags::RFlags;
-use x86_64::structures::gdt::GlobalDescriptorTable;
-use x86_64::VirtAddr;
-use crate::println;
+use x86_64::registers::model_specific::{Msr};
+
+use crate::{println, syscall};
 
 const MSR_SCE: u32 = 0xC0000080;
 const IA32_STAR: u32 = 0xC0000081;
@@ -18,7 +16,7 @@ const STACK_SIZE: usize = 0x1000;
 pub unsafe fn init() {
     // enable system call extensions
     let mut sce = Msr::new(MSR_SCE);
-    let mut new_sce = sce.read() | 0b1;
+    let new_sce = sce.read() | 0b1;
     sce.write(new_sce);
 
     // magic value for clearing interrupt flag
@@ -91,22 +89,28 @@ unsafe extern "C" fn setup_syscall_stack() -> *mut u8 {
     //let syscall_stack = Box::<[u8; STACK_SIZE]>::new_uninit();
     let stack_layout = Layout::from_size_align_unchecked(STACK_SIZE, 0x8);
     let syscall_stack = alloc::alloc::alloc(stack_layout);
-    let stack_pointer = syscall_stack.offset(stack_layout.size() as isize);
-    stack_pointer
+    
+    syscall_stack.add(stack_layout.size())
 }
 
 unsafe extern "C" fn delete_syscall_stack(stack_end_ptr: *mut u8) {
     let stack_layout = Layout::from_size_align_unchecked(STACK_SIZE, 0x8);
-    let stack_ptr = stack_end_ptr.offset(-1 * stack_layout.size() as isize);
+    let stack_ptr = stack_end_ptr.offset(-(stack_layout.size() as isize));
     alloc::alloc::dealloc(stack_ptr, stack_layout);
 }
 
 extern "C" fn syscall_handler(
-    syscall: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64
+    syscall_id: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64
 ) -> i64 {
     // body of syscall handler
-    println!("{} {} {} {} {}", syscall, arg0, arg1, arg2, arg3);
+    match syscall_id {
+        0 => syscall::display::print_vga_text(arg0, arg1),
+        _ => default_syscall(syscall_id)
+    }
+}
 
+fn default_syscall(syscall_id: u64) -> i64 {
+    println!("Unknown syscall: {}", syscall_id);
     0
 }
 
