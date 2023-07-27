@@ -14,11 +14,10 @@ use trees::{Tree, Node, TreeWalk};
 use trees::walk::Visit;
 use bitfield_struct::bitfield;
 
-static FILE_SYSTEM: Mutex<Option<FileSystem>> = Mutex::new(None);
+pub static FILE_SYSTEM: Mutex<Option<FileSystem>> = Mutex::new(None);
 static BOOT_SECTOR: OnceCell<(usize, FatBootSector)> = OnceCell::uninit();
 
-struct FileSystem(Tree<File>);
-unsafe impl Send for FileSystem {}
+pub struct FileSystem(Tree<File>);
 
 #[repr(C, packed)]
 #[derive(Debug)]
@@ -167,17 +166,6 @@ pub fn init(drive_num: usize) {
     let mut fs = Tree::new(File::default());
     parse_directory(mapper,root_cluster, &mut fs.root_mut());
 
-    tree(fs.root(), 0);
-
-    for visit in fs.root().bfs().iter {
-        let file = visit.data;
-        if core::str::from_utf8(&file.name[8..11]).unwrap() == "TXT" {
-            let data = file.get_data(mapper).unwrap();
-            let text = core::str::from_utf8(&data).unwrap();
-            serial_println!("{}", text);
-        }
-    }
-
     *FILE_SYSTEM.lock() = Some(FileSystem(fs));
 }
 
@@ -245,3 +233,11 @@ fn parse_directory(
         cluster_idx += 1;
     }
 }
+
+impl FileSystem {
+    pub fn as_tree(&self) -> &Tree<File> {
+        &self.0
+    }
+}
+
+unsafe impl Send for FileSystem {}

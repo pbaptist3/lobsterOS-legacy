@@ -4,7 +4,7 @@ use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 
 /// Initialize physical memory offset page table
 pub unsafe fn init() -> OffsetPageTable<'static> {
-    let phys_offset = crate::BootInfo.get()
+    let phys_offset = crate::BOOT_INFO.get()
         .expect("boot info not initialized")
         .physical_memory_offset;
     let level_4_table = active_level_4_table(phys_offset);
@@ -19,7 +19,7 @@ pub unsafe fn active_level_4_table(physical_memory_offset: u64) -> &'static mut 
 
     let phys = level_4_table_frame.start_address();
     let virt = physical_memory_offset + phys.as_u64();
-    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
+    let page_table_ptr: *mut PageTable = virt as *mut PageTable;
 
     &mut *page_table_ptr
 }
@@ -58,4 +58,6 @@ unsafe impl FrameAllocator::<Size4KiB> for BootInfoFrameAllocator {
         frame
     }
 }
+
+pub unsafe fn map_memory_region() {}
 

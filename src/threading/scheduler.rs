@@ -60,7 +60,6 @@ impl Scheduler {
         self.get_next_task();
         if let Some(next_task) = self.tasks.get_mut(self.current_task) {
             next_task.update_state(TaskState::RUNNING);
-            println!("SUCCESS {}", self.current_task);
             // TODO this is awful
             SCHEDULER.force_unlock();
             next_task.activate();

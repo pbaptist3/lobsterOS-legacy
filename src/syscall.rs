@@ -104,7 +104,7 @@ extern "C" fn syscall_handler(
 ) -> i64 {
     // body of syscall handler
     match syscall_id {
-        0 => syscall::display::print_vga_text(arg0, arg1),
+        0 => display::print_vga_text(arg0, arg1),
         _ => default_syscall(syscall_id)
     }
 }

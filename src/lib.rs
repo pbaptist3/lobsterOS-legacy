@@ -22,6 +22,7 @@ use bootloader::{entry_point, BootInfo};
 use conquer_once::spin::OnceCell;
 use x86_64::structures::paging::OffsetPageTable;
 use x86_64::VirtAddr;
+use crate::threading::scheduler::SCHEDULER;
 
 pub mod display;
 pub mod interrupts;
@@ -60,16 +61,29 @@ pub fn init(boot_info: &'static BootInfo) {
     let mut frame_allocator = unsafe {
         memory::BootInfoFrameAllocator::init(&boot_info.memory_map)
     };
-    MAPPER.init_once(|| mapper);
     // initialize kernel heap
     allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Failed to initialize heap");
+    MAPPER.init_once(|| mapper);
 
     acpi::init(boot_info.physical_memory_offset);
     pci::init(boot_info.physical_memory_offset);
     disk::init();
     // TODO make drive num dynamic
     fs::init(1);
+
+
+    let fs_guard = fs::FILE_SYSTEM.lock();
+    let fs = fs_guard.as_ref().unwrap();
+    for visit in fs.as_tree().root().bfs().iter {
+        let file = visit.data;
+        if file.get_name().len() >= 8 && &file.get_name()[..8] == "TEST_ELF" {
+            let data = file.get_data(MAPPER.get().unwrap()).unwrap();
+            //serial_println!("{:x?}", &data[0x120..0x132]);
+            let process = unsafe { process::Process::spawn_from_file(&data, &mut frame_allocator) };
+            SCHEDULER.lock().push_task(process);
+        }
+    }
 }
 
 /// CPU efficient loop

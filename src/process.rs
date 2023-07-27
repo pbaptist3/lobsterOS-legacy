@@ -1,13 +1,17 @@
 use crate::memory::BootInfoFrameAllocator;
 
-use crate::{gdt, memory, println, userspace};
+use crate::{gdt, memory, println, serial_println, userspace};
 use alloc::boxed::Box;
-
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::arch::asm;
 use core::mem::size_of_val;
+use core::pin::Pin;
+use core::ptr::addr_of;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB, Translate};
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::registers::control::Cr3;
+use crate::elf::ProgramHeader;
 use crate::threading::thread::State;
 
 const USERSPACE_VIRT_BASE: u64 = 0x400000;
@@ -20,26 +24,20 @@ pub struct Process {
     process_state: Option<ProcessState>,
     page_table_addr: PhysAddr,
     entry_offset: u64,
+    regions: BTreeMap<u64, [u8; 0x1000]>,
 }
 
 impl Process {
-    pub unsafe fn new(
-        mapper: &mut OffsetPageTable,
+    /*unsafe fn new(
         frame_allocator: &mut BootInfoFrameAllocator,
     ) -> Self {
+        let mapper = crate::MAPPER.get()
+            .expect("mapper not initialized");
+
         // create page table and map process to it
         let (page_table, page_table_addr, entry_offset) =
             Self::map_process(mapper, frame_allocator)
             .expect("Failed to create virtual memory for process");
-
-        // activate page table
-        /*
-
-        // jump to usermode
-        switch_to_usermode(
-            VirtAddr::new(USERSPACE_VIRT_BASE + entry_offset),
-            VirtAddr::new(USERSPACE_STACK)
-        );*/
 
         Self {
             page_table,
@@ -47,6 +45,42 @@ impl Process {
             process_state: None,
             page_table_addr,
             entry_offset,
+            regions: Vec::new()
+        }
+    }*/
+
+    pub unsafe fn spawn_from_file(
+        file: &Vec<u8>, frame_allocator: &mut BootInfoFrameAllocator
+    ) -> Self {
+        let mapper = crate::MAPPER.get()
+            .expect("mapper not initialized");
+
+        let current_page_table = memory::active_level_4_table(
+            mapper.phys_offset().as_u64()
+        );
+        let mut page_table = Self::new_page_table(current_page_table, frame_allocator, mapper)
+            .expect("failed to create page table");
+        let page_table_virt_addr = VirtAddr::new(addr_of!(*page_table) as u64);
+        let page_table_addr = mapper.translate_addr(page_table_virt_addr)
+            .unwrap();
+        let mut new_mapper = OffsetPageTable::new(
+            &mut page_table, mapper.phys_offset()
+        );
+
+        Self::map_stack(&mut new_mapper, frame_allocator);
+
+        let (regions, entry_point) = crate::elf::do_stuff(
+            file, &mut new_mapper, frame_allocator
+        );
+        serial_println!("{:x}", entry_point);
+
+        Self {
+            page_table,
+            task_state: TaskState::READY,
+            process_state: None,
+            page_table_addr,
+            entry_offset: entry_point,
+            regions,
         }
     }
 
@@ -54,7 +88,7 @@ impl Process {
     fn new_page_table(
         current_page_table: &PageTable,
         frame_allocator: &mut BootInfoFrameAllocator,
-        mapper: &mut OffsetPageTable
+        mapper: &OffsetPageTable
     ) -> Option<Box<PageTable>> {
         let mut page_table = Box::new(PageTable::new());
         page_table.zero();
@@ -98,12 +132,36 @@ impl Process {
         Some(page_table)
     }
 
+    unsafe fn map_stack(
+        mapper: &mut OffsetPageTable,
+        frame_allocator: &mut BootInfoFrameAllocator
+    ) {
+        let start_page = Page::containing_address(VirtAddr::new(USERSPACE_STACK_BASE));
+        let end_page = Page::containing_address(VirtAddr::new(USERSPACE_STACK));
+        let stack_range = Page::range_inclusive(start_page, end_page);
+        for page in stack_range {
+            mapper
+                .map_to(
+                    page,
+                    frame_allocator.allocate_frame().unwrap(), // TODO this leaks
+                    PageTableFlags::PRESENT
+                        | PageTableFlags::WRITABLE
+                        | PageTableFlags::USER_ACCESSIBLE,
+                    frame_allocator
+                )
+                .unwrap()
+                .flush();
+        }
+    }
+
     /// Creates process virtual memory and maps to it
     unsafe fn map_process(
-        old_mapper: &mut OffsetPageTable,
+        old_mapper: &OffsetPageTable,
         frame_allocator: &mut BootInfoFrameAllocator,
-    ) -> Option<(Box<PageTable>, PhysAddr, u64)> {
-        let page_table = memory::active_level_4_table(old_mapper.phys_offset());
+    ) -> Option<(Box<PageTable>, PhysAddr)> {
+        let page_table = memory::active_level_4_table(
+            old_mapper.phys_offset().as_u64()
+        );
         let userspace_fn_in_kernel = VirtAddr::new(userspace::example_process as *const () as u64);
         let userspace_fn_phys = old_mapper
             .translate_addr(userspace_fn_in_kernel)
@@ -151,7 +209,8 @@ impl Process {
             .unwrap();
         map_result.flush();
 
-        Some((new_page_table, new_page_table_addr, userspace_fn_offset))
+
+        Some((new_page_table, new_page_table_addr))
     }
 
     pub fn get_state(&self) -> TaskState {
@@ -256,7 +315,8 @@ impl Process {
     }
 
     unsafe fn switch_to_usermode(&self) {
-        let entry_point = USERSPACE_VIRT_BASE + self.entry_offset;
+        serial_println!("{:x?}", *(0x201120 as *const [u8; 8]));
+        let entry_point = self.entry_offset;
         let eflags = x86_64::registers::rflags::read().bits();
 
         let (cs_index, ds_index) = gdt::set_usermode_segments();
