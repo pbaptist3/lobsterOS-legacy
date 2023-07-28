@@ -79,7 +79,6 @@ pub fn init(boot_info: &'static BootInfo) {
         let file = visit.data;
         if file.get_name().len() >= 8 && &file.get_name()[..8] == "TEST_ELF" {
             let data = file.get_data(MAPPER.get().unwrap()).unwrap();
-            //serial_println!("{:x?}", &data[0x120..0x132]);
             let process = unsafe { process::Process::spawn_from_file(&data, &mut frame_allocator) };
             SCHEDULER.lock().push_task(process);
         }

@@ -123,12 +123,11 @@ impl ElfHeader {
     }
 }
 
-pub unsafe fn do_stuff(
+pub unsafe fn map_elf_file_to_process(
     file: &Vec<u8>, mapper: &mut OffsetPageTable, frame_allocator: &mut BootInfoFrameAllocator
 ) -> (BTreeMap<u64, [u8; 0x1000]>, u64) {
     let elf_header = ElfHeader::from_slice(&file[..size_of::<ElfHeader>()])
         .expect("invalid elf header");
-    serial_println!("{:#?}", elf_header);
 
     // make array of program headers
     let program_headers = &*slice_from_raw_parts(
@@ -138,7 +137,6 @@ pub unsafe fn do_stuff(
 
     let mut regions: BTreeMap<u64, [u8; 0x1000]> = BTreeMap::new();
     for program_header in program_headers {
-        serial_println!("{:?}", program_header);
         if read_unaligned(addr_of!(program_header.header_type)) != Load {
             continue;
         }
@@ -168,16 +166,11 @@ pub unsafe fn do_stuff(
             let write_size = min(page_addr+0x1000, file_size - working_offset + 1);
             let lower_bound_offset = lower_bound % 0x1000;
             let mut page = regions.get_mut(&page_addr).unwrap();
-            serial_println!(
-                "lb: {:x}\tpa: {:x}\tws: {:x}\tlbo: {:x}",
-                lower_bound, page_addr, write_size, lower_bound_offset
-            );
+
             page[(lower_bound_offset as usize)..((lower_bound_offset+write_size) as usize)]
                 .copy_from_slice(
                     &file[(lower_bound as usize)..((lower_bound+write_size) as usize)]
                 );
-            serial_println!("{:x?}", &file[(lower_bound as usize)..((lower_bound+write_size) as usize)]);
-            serial_println!("{:x?}", &page[(lower_bound_offset as usize)..((lower_bound_offset+write_size) as usize)]);
             working_offset += write_size;
         }
     }
@@ -186,7 +179,6 @@ pub unsafe fn do_stuff(
     for (virt_addr, page) in regions.iter() {
         let phys_addr = mapper.translate_addr(VirtAddr::from_ptr(page.as_ptr()))
             .unwrap();
-        serial_println!("p_addr: {:x}", phys_addr.as_u64());
         mapper
             .map_to(
                 Page::<Size4KiB>::from_start_address(VirtAddr::new(*virt_addr)).unwrap(),

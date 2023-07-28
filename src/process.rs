@@ -28,27 +28,6 @@ pub struct Process {
 }
 
 impl Process {
-    /*unsafe fn new(
-        frame_allocator: &mut BootInfoFrameAllocator,
-    ) -> Self {
-        let mapper = crate::MAPPER.get()
-            .expect("mapper not initialized");
-
-        // create page table and map process to it
-        let (page_table, page_table_addr, entry_offset) =
-            Self::map_process(mapper, frame_allocator)
-            .expect("Failed to create virtual memory for process");
-
-        Self {
-            page_table,
-            task_state: TaskState::READY,
-            process_state: None,
-            page_table_addr,
-            entry_offset,
-            regions: Vec::new()
-        }
-    }*/
-
     pub unsafe fn spawn_from_file(
         file: &Vec<u8>, frame_allocator: &mut BootInfoFrameAllocator
     ) -> Self {
@@ -69,10 +48,9 @@ impl Process {
 
         Self::map_stack(&mut new_mapper, frame_allocator);
 
-        let (regions, entry_point) = crate::elf::do_stuff(
+        let (regions, entry_point) = crate::elf::map_elf_file_to_process(
             file, &mut new_mapper, frame_allocator
         );
-        serial_println!("{:x}", entry_point);
 
         Self {
             page_table,
@@ -315,7 +293,6 @@ impl Process {
     }
 
     unsafe fn switch_to_usermode(&self) {
-        serial_println!("{:x?}", *(0x201120 as *const [u8; 8]));
         let entry_point = self.entry_offset;
         let eflags = x86_64::registers::rflags::read().bits();
 
