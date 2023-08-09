@@ -20,7 +20,6 @@ const USERSPACE_STACK_BASE: u64 = 0x800000;
 
 pub struct Process {
     page_table: Box<PageTable>,
-    task_state: TaskState,
     process_state: Option<ProcessState>,
     page_table_addr: PhysAddr,
     entry_offset: u64,
@@ -54,7 +53,6 @@ impl Process {
 
         Self {
             page_table,
-            task_state: TaskState::READY,
             process_state: None,
             page_table_addr,
             entry_offset: entry_point,
@@ -191,14 +189,6 @@ impl Process {
         Some((new_page_table, new_page_table_addr))
     }
 
-    pub fn get_state(&self) -> TaskState {
-        self.task_state
-    }
-
-    pub fn update_state(&mut self, state: TaskState) {
-        self.task_state = state;
-    }
-
     pub unsafe extern "C" fn activate(&mut self) -> bool {
         use x86_64::instructions::tlb;
 
@@ -297,7 +287,6 @@ impl Process {
         let eflags = x86_64::registers::rflags::read().bits();
 
         let (cs_index, ds_index) = gdt::set_usermode_segments();
-        //tlb::flush_all();
 
         asm!("\
         push rax
@@ -312,14 +301,6 @@ impl Process {
         in("ax") ds_index,
         );
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TaskState {
-    READY,
-    RUNNING,
-    WAITING,
-    DONE,
 }
 
 struct ProcessState {

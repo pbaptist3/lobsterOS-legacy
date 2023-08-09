@@ -1,10 +1,11 @@
 mod display;
+mod process;
 
 use core::alloc::Layout;
 use core::arch::asm;
 use x86_64::registers::model_specific::{Msr};
 
-use crate::{println, syscall};
+use crate::{println, serial_println, syscall};
 
 const MSR_SCE: u32 = 0xC0000080;
 const IA32_STAR: u32 = 0xC0000081;
@@ -86,7 +87,6 @@ extern "C" fn syscall_wrapper() {
 }
 
 unsafe extern "C" fn setup_syscall_stack() -> *mut u8 {
-    //let syscall_stack = Box::<[u8; STACK_SIZE]>::new_uninit();
     let stack_layout = Layout::from_size_align_unchecked(STACK_SIZE, 0x8);
     let syscall_stack = alloc::alloc::alloc(stack_layout);
     
@@ -99,18 +99,19 @@ unsafe extern "C" fn delete_syscall_stack(stack_end_ptr: *mut u8) {
     alloc::alloc::dealloc(stack_ptr, stack_layout);
 }
 
-extern "C" fn syscall_handler(
-    syscall_id: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64
+unsafe extern "C" fn syscall_handler(
+    syscall_id: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, stack_addr: u64
 ) -> i64 {
     // body of syscall handler
     match syscall_id {
         0 => display::print_vga_text(arg0, arg1),
+        1 => process::exit(arg0, stack_addr),
         _ => default_syscall(syscall_id)
     }
 }
 
 fn default_syscall(syscall_id: u64) -> i64 {
-    println!("Unknown syscall: {}", syscall_id);
+    println!("unknown syscall: {}", syscall_id);
     0
 }
 

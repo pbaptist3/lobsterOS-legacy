@@ -238,6 +238,7 @@ impl FileSystem {
     pub fn as_tree(&self) -> &Tree<File> {
         &self.0
     }
+    fn as_tree_mut(&mut self) -> &mut Tree<File> { &mut self.0 }
 }
 
 unsafe impl Send for FileSystem {}

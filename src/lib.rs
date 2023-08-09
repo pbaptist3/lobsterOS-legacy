@@ -72,17 +72,33 @@ pub fn init(boot_info: &'static BootInfo) {
     // TODO make drive num dynamic
     fs::init(1);
 
-
+    // find shell
     let fs_guard = fs::FILE_SYSTEM.lock();
-    let fs = fs_guard.as_ref().unwrap();
-    for visit in fs.as_tree().root().bfs().iter {
-        let file = visit.data;
-        if file.get_name().len() >= 8 && &file.get_name()[..8] == "TEST_ELF" {
-            let data = file.get_data(MAPPER.get().unwrap()).unwrap();
-            let process = unsafe { process::Process::spawn_from_file(&data, &mut frame_allocator) };
-            SCHEDULER.lock().push_task(process);
-        }
-    }
+    let fs = fs_guard.as_ref()
+        .expect("file system not initialized");
+    let bash_file = fs.as_tree()
+        .root()
+        .iter()
+        .find(|n| {
+            let name = n.data().get_name();
+            name == "BIN        "
+        })
+        .expect("no bin folder in root directory")
+        .iter()
+        .find(|n| {
+            let name = n.data().get_name();
+            name == "BASH       "
+        })
+        .expect("no bash executable in /bin")
+        .data();
+    let data = bash_file.get_data(MAPPER.get().unwrap())
+        .expect("failed to get bash data (corrupted disk?)");
+    let process = unsafe {
+        process::Process::spawn_from_file(&data, &mut frame_allocator)
+    };
+    let mut scheduler = SCHEDULER.lock();
+    scheduler.push_task(process);
+    scheduler.enable();
 }
 
 /// CPU efficient loop

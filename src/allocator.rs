@@ -6,7 +6,7 @@ use x86_64::VirtAddr;
 use fixed_block::FixedBlockAlloc;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 0x200 * 0x1000;
+pub const HEAP_SIZE: usize = 0x100 * 0x1000;
 
 #[global_allocator]
 static ALLOCATOR: Locked<FixedBlockAlloc> = Locked::new(FixedBlockAlloc::new());
@@ -32,10 +32,10 @@ pub fn init_heap(
         // set page to be present and writable
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
         unsafe {
-            mapper.map_to(page, frame, flags, frame_allocator)?
-                .flush()
+            mapper.map_to(page, frame, flags, frame_allocator)?;
         };
     }
+    x86_64::instructions::tlb::flush_all();
 
     unsafe {
         ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE)

@@ -269,7 +269,6 @@ fn check_function(
     devices: &mut Vec<&'static DeviceConfigurationSpace>,
     config_space: &'static DeviceConfigurationSpace
 ) {
-    serial_println!("Config Space: {:?}", config_space);
     devices.push(config_space);
 }
 
