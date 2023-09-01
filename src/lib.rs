@@ -46,7 +46,26 @@ entry_point!(test_kernel_main);
 pub static BOOT_INFO: OnceCell<&'static BootInfo> = OnceCell::uninit();
 pub static MAPPER: OnceCell<OffsetPageTable> = OnceCell::uninit();
 
-/// initialize the kernel
+/// This function initializes the kernel. It requires that all of memory be mapped at a virtual
+/// offset. It does the following in order:
+///
+/// 1. initializes the gdt
+///
+/// 2. initializes syscall registers
+///
+/// 3. initializes interrupts
+///
+/// 4. initializes PICS
+///
+/// 5. creates a frame allocator
+///
+/// 6. allocates the kernel heap
+///
+/// 7. initializes acpi, pci, and disk drivers
+///
+/// 8. parses the file system
+///
+/// 9. finds /bin/bash and executes it
 pub fn init(boot_info: &'static BootInfo) {
     BOOT_INFO.init_once(|| boot_info);
 
