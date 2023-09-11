@@ -12,7 +12,7 @@ use core::pin::Pin;
 use core::ptr::addr_of;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB, Translate};
 use x86_64::{PhysAddr, VirtAddr};
-use x86_64::instructions::tlb;
+use x86_64::instructions::{interrupts, tlb};
 use x86_64::registers::control::Cr3;
 use crate::elf::ProgramHeader;
 use crate::threading::thread::State;
@@ -75,6 +75,9 @@ impl Process {
 
         Self::map_stack(&mut new_mapper, frame_allocator);
 
+        // ensure no interrupts during mapping
+        interrupts::disable();
+
         // temp swap contexts
         let (current_table_frame, cr3_flags) = Cr3::read();
         Cr3::write(
@@ -91,6 +94,9 @@ impl Process {
         // swap back to previous context
         Cr3::write(current_table_frame, cr3_flags);
         tlb::flush_all();
+
+        // enable interrupts
+        interrupts::enable();
 
         Ok(Self {
             page_table,
