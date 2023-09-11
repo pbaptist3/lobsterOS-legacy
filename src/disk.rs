@@ -166,7 +166,7 @@ struct HBA {
     hba_ports: [HBAPort; 32],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C, packed)]
 struct HBAPort {
     cl_base: u32,

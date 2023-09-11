@@ -1,15 +1,18 @@
 use crate::memory::BootInfoFrameAllocator;
 
-use crate::{gdt, memory, println, serial_println, userspace};
+use crate::{gdt, memory, println, process, serial_println, userspace};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::error::Error;
+use core::fmt::{Display, Formatter};
 use core::mem::size_of_val;
 use core::pin::Pin;
 use core::ptr::addr_of;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB, Translate};
 use x86_64::{PhysAddr, VirtAddr};
+use x86_64::instructions::tlb;
 use x86_64::registers::control::Cr3;
 use crate::elf::ProgramHeader;
 use crate::threading::thread::State;
@@ -23,13 +26,38 @@ pub struct Process {
     process_state: Option<ProcessState>,
     page_table_addr: PhysAddr,
     entry_offset: u64,
-    regions: BTreeMap<u64, [u8; 0x1000]>,
+    regions: Vec<PhysFrame>,
 }
+
+struct ProcessState {
+    rbx: u64,
+    rbp: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    rsp: u64,
+}
+
+#[derive(Debug)]
+pub enum ProcessSpawnError {
+    MapFail
+}
+
+impl Display for ProcessSpawnError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "failed to spawn process: {}", match self {
+            ProcessSpawnError::MapFail => "map process error",
+        })
+    }
+}
+
+impl Error for ProcessSpawnError {}
 
 impl Process {
     pub unsafe fn spawn_from_file(
-        file: &Vec<u8>, frame_allocator: &mut BootInfoFrameAllocator
-    ) -> Self {
+        file: &Vec<u8>, frame_allocator: &mut impl FrameAllocator<Size4KiB>
+    ) -> Result<Self, ProcessSpawnError> {
         let mapper = crate::MAPPER.get()
             .expect("mapper not initialized");
 
@@ -47,23 +75,36 @@ impl Process {
 
         Self::map_stack(&mut new_mapper, frame_allocator);
 
+        // temp swap contexts
+        let (current_table_frame, cr3_flags) = Cr3::read();
+        Cr3::write(
+            PhysFrame::containing_address(page_table_addr),
+            cr3_flags
+        );
+        tlb::flush_all();
+
+        // map elf file regions
         let (regions, entry_point) = crate::elf::map_elf_file_to_process(
             file, &mut new_mapper, frame_allocator
         );
 
-        Self {
+        // swap back to previous context
+        Cr3::write(current_table_frame, cr3_flags);
+        tlb::flush_all();
+
+        Ok(Self {
             page_table,
             process_state: None,
             page_table_addr,
             entry_offset: entry_point,
             regions,
-        }
+        })
     }
 
-    /// Creates a page table for a new process, copying over kernel pages
+    /// Creates a page table for a new process, copying over kernel and IO pages
     fn new_page_table(
         current_page_table: &PageTable,
-        frame_allocator: &mut BootInfoFrameAllocator,
+        frame_allocator: &mut impl FrameAllocator<Size4KiB>,
         mapper: &OffsetPageTable
     ) -> Option<Box<PageTable>> {
         let mut page_table = Box::new(PageTable::new());
@@ -73,7 +114,7 @@ impl Process {
             PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
         );
         // map currently used kernel addresses
-        // assumes page table entry 0 is a page table (just allocated so why not?)
+        // assumes page table entry 0 is a page table
         let page_table_0 = unsafe {
             &mut *((page_table[0].addr().as_u64() + mapper.phys_offset().as_u64()) as *mut PageTable)
         };
@@ -110,7 +151,7 @@ impl Process {
 
     unsafe fn map_stack(
         mapper: &mut OffsetPageTable,
-        frame_allocator: &mut BootInfoFrameAllocator
+        frame_allocator: &mut impl FrameAllocator<Size4KiB>
     ) {
         let start_page = Page::containing_address(VirtAddr::new(USERSPACE_STACK_BASE));
         let end_page = Page::containing_address(VirtAddr::new(USERSPACE_STACK));
@@ -131,7 +172,7 @@ impl Process {
     }
 
     /// Creates process virtual memory and maps to it
-    unsafe fn map_process(
+    /*unsafe fn map_process(
         old_mapper: &OffsetPageTable,
         frame_allocator: &mut BootInfoFrameAllocator,
     ) -> Option<(Box<PageTable>, PhysAddr)> {
@@ -187,10 +228,9 @@ impl Process {
 
 
         Some((new_page_table, new_page_table_addr))
-    }
+    }*/
 
     pub unsafe extern "C" fn activate(&mut self) -> bool {
-        use x86_64::instructions::tlb;
 
         let (_, cr3_flags) = Cr3::read();
         Cr3::write(
@@ -301,14 +341,4 @@ impl Process {
         in("ax") ds_index,
         );
     }
-}
-
-struct ProcessState {
-    rbx: u64,
-    rbp: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-    rsp: u64,
 }

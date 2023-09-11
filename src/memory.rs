@@ -1,6 +1,9 @@
-use x86_64::structures::paging::{FrameAllocator, OffsetPageTable, PageTable, PhysFrame, Size4KiB};
+use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
+use x86_64::structures::paging::{FrameAllocator, FrameDeallocator, OffsetPageTable, PageTable, PhysFrame, Size4KiB};
 use x86_64::{PhysAddr, VirtAddr};
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+use crate::println;
 
 /// Initialize physical memory offset page table
 pub unsafe fn init() -> OffsetPageTable<'static> {
@@ -27,10 +30,52 @@ pub unsafe fn active_level_4_table(physical_memory_offset: u64) -> &'static mut 
 /// Allocates frames from bootlaoder's memory map
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryMap,
-    next: usize,
+    frame_iter: Box<dyn Iterator<Item = PhysFrame>>
 }
 
 impl BootInfoFrameAllocator {
+    /// Create a frame allocator from the memory map provides
+    ///
+    /// Memory map must be valid and all USABLE frames must be truly unused
+    pub unsafe fn init(memory_map: &'static MemoryMap, used: usize) -> Self {
+        let frame_iter = Self::usable_frames(memory_map);
+        let frame_iter = frame_iter.skip(used);
+        Self {
+            memory_map,
+            frame_iter: Box::new(frame_iter)
+        }
+    }
+
+    /// Returns an iterator over all usable frames
+    fn usable_frames(memory_map: &'static MemoryMap) -> impl Iterator<Item = PhysFrame> {
+        let regions = memory_map.iter();
+        let usable_regions = regions.filter(|r| r.region_type == MemoryRegionType::Usable);
+        let addr_ranges = usable_regions.map(|r| r.range.start_addr()..r.range.end_addr());
+        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
+        let frame_iter = frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)));
+        frame_iter
+    }
+}
+
+unsafe impl FrameAllocator::<Size4KiB> for BootInfoFrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame> {
+        self.frame_iter.next()
+    }
+}
+
+impl FrameDeallocator::<Size4KiB> for BootInfoFrameAllocator {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
+        todo!()
+    }
+}
+
+/// Allocates frames from bootloader's memory map
+pub struct LinearFrameAllocator {
+    memory_map: &'static MemoryMap,
+    next: usize,
+}
+
+impl LinearFrameAllocator {
     /// Create a frame allocator from the memory map provides
     ///
     /// Memory map must be valid and all USABLE frames must be truly unused
@@ -47,17 +92,18 @@ impl BootInfoFrameAllocator {
         let usable_regions = regions.filter(|r| r.region_type == MemoryRegionType::Usable);
         let addr_ranges = usable_regions.map(|r| r.range.start_addr()..r.range.end_addr());
         let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
-        frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+        let frame_iter = frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)));
+        frame_iter
+    }
+
+    pub fn get_used(&self) -> usize {
+        self.next
     }
 }
 
-unsafe impl FrameAllocator::<Size4KiB> for BootInfoFrameAllocator {
+unsafe impl FrameAllocator::<Size4KiB> for LinearFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.usable_frames().nth(self.next);
         self.next += 1;
-        frame
+        self.usable_frames().nth(self.next)
     }
 }
-
-pub unsafe fn map_memory_region() {}
-

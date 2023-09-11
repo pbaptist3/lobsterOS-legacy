@@ -20,7 +20,7 @@ static BOOT_SECTOR: OnceCell<(usize, FatBootSector)> = OnceCell::uninit();
 pub struct FileSystem(Tree<File>);
 
 #[repr(C, packed)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct FatBootSector {
     boot_jmp: [u8; 3],
     oem_name: [u8; 8],
@@ -219,7 +219,6 @@ fn parse_directory(
             if file.get_name() == ".          " || file.get_name() == "..         " {
                 continue;
             }
-            core::mem::forget(entry);
             parent.push_back(Tree::new(file));
 
             // recursively parse directories

@@ -1,6 +1,6 @@
 use alloc::{format, vec};
 use alloc::alloc::alloc_zeroed;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::alloc::Layout;
@@ -10,13 +10,13 @@ use core::fmt::{Display, Formatter};
 use core::mem::{size_of, transmute};
 use core::pin::Pin;
 use core::ptr::{addr_of, read_unaligned, slice_from_raw_parts, slice_from_raw_parts_mut};
-use x86_64::structures::paging::{Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB, Translate};
+use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB, Translate};
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::mapper::MappedFrame;
 use x86_64::{align_down, align_up, VirtAddr};
 use crate::elf::ElfVerifyError::{BadMagicNum, Elf32Bit, BadSliceSize, BadEndianness, BadArch};
 use crate::elf::ProgramHeaderType::Load;
-use crate::{MAPPER, serial_println};
+use crate::{MAPPER, println, serial_println};
 use crate::memory::BootInfoFrameAllocator;
 
 const MAGIC_NUM: &[u8; 4] = b"\x7FELF";
@@ -123,9 +123,12 @@ impl ElfHeader {
     }
 }
 
+/// Map elf file in new process memory space
+///
+/// Requires that the currently active page table is the new process space and has the kernel mapped
 pub unsafe fn map_elf_file_to_process(
-    file: &Vec<u8>, mapper: &mut OffsetPageTable, frame_allocator: &mut BootInfoFrameAllocator
-) -> (BTreeMap<u64, [u8; 0x1000]>, u64) {
+    file: &Vec<u8>, mapper: &mut OffsetPageTable, frame_allocator: &mut impl FrameAllocator<Size4KiB>
+) -> (Vec<PhysFrame>, u64) {
     let elf_header = ElfHeader::from_slice(&file[..size_of::<ElfHeader>()])
         .expect("invalid elf header");
 
@@ -135,7 +138,8 @@ pub unsafe fn map_elf_file_to_process(
         elf_header.program_entry_count as usize
     );
 
-    let mut regions: BTreeMap<u64, [u8; 0x1000]> = BTreeMap::new();
+    let mut regions: BTreeSet<u64> = BTreeSet::new();
+    let mut frames: Vec<PhysFrame> = Vec::new();
     for program_header in program_headers {
         if read_unaligned(addr_of!(program_header.header_type)) != Load {
             continue;
@@ -150,22 +154,40 @@ pub unsafe fn map_elf_file_to_process(
         // allocate pages
         for i in 0..page_count {
             let page_addr = i*0x1000 + align_down(virt_addr, 0x1000);
-            if !regions.contains_key(&page_addr) {
-                let layout = Layout::from_size_align_unchecked(0x1000, 0x1000);
-                let mut page: [u8; 0x1000] = *(alloc_zeroed(layout) as *mut [u8; 0x1000]);
-                regions.insert(page_addr, page);
+            if !regions.contains(&page_addr) {
+                let frame = frame_allocator.allocate_frame()
+                    .expect("failed to allocate frame");
+                mapper
+                    .map_to(
+                        Page::<Size4KiB>::containing_address(VirtAddr::new(virt_addr)),
+                        frame,
+                        PageTableFlags::PRESENT
+                            | PageTableFlags::WRITABLE
+                            | PageTableFlags::USER_ACCESSIBLE,
+                        frame_allocator
+                    )
+                    .unwrap()
+                    .flush();
+
+                frames.push(frame);
+                regions.insert(page_addr);
             }
         }
 
         // copy over data
         let mut working_offset = 0;
         let file_data_page_count = file_size / 0x1000 + 1;
-        for i in 0..file_data_page_count {
+        for _ in 0..file_data_page_count {
             let lower_bound = offset + working_offset;
             let page_addr = align_down(virt_addr + working_offset, 0x1000);
             let write_size = min(page_addr+0x1000, file_size - working_offset + 1);
             let lower_bound_offset = lower_bound % 0x1000;
-            let mut page = regions.get_mut(&page_addr).unwrap();
+
+            // get memory page from address
+            let page = &mut *slice_from_raw_parts_mut(
+                page_addr as *mut u8,
+                0x1000
+            );
 
             page[(lower_bound_offset as usize)..((lower_bound_offset+write_size) as usize)]
                 .copy_from_slice(
@@ -175,22 +197,78 @@ pub unsafe fn map_elf_file_to_process(
         }
     }
 
-    // map pages
-    for (virt_addr, page) in regions.iter() {
-        let phys_addr = mapper.translate_addr(VirtAddr::from_ptr(page.as_ptr()))
-            .unwrap();
-        mapper
-            .map_to(
-                Page::<Size4KiB>::from_start_address(VirtAddr::new(*virt_addr)).unwrap(),
-                PhysFrame::containing_address(phys_addr),
-                PageTableFlags::PRESENT
-                    | PageTableFlags::WRITABLE
-                    | PageTableFlags::USER_ACCESSIBLE,
-                frame_allocator
-            )
-            .unwrap()
-            .flush();
-    }
-
-    (regions, elf_header.program_entry)
+    (frames, elf_header.program_entry)
 }
+
+// pub unsafe fn map_elf_file_to_process(
+//     file: &Vec<u8>, mapper: &mut OffsetPageTable, frame_allocator: &mut impl FrameAllocator<Size4KiB>
+// ) -> (Vec<PhysFrame>, u64) {
+//     let elf_header = ElfHeader::from_slice(&file[..size_of::<ElfHeader>()])
+//         .expect("invalid elf header");
+//
+//     // make array of program headers
+//     let program_headers = &*slice_from_raw_parts(
+//         addr_of!(file[elf_header.program_header_table as usize]) as *const ProgramHeader,
+//         elf_header.program_entry_count as usize
+//     );
+//
+//     let mut regions: BTreeSet<u64> = BTreeSet::new();
+//     for program_header in program_headers {
+//         if read_unaligned(addr_of!(program_header.header_type)) != Load {
+//             continue;
+//         }
+//
+//         let mem_size = program_header.mem_size;
+//         let offset = program_header.offset;
+//         let file_size = program_header.file_size;
+//         let virt_addr = program_header.virt_addr;
+//
+//         let page_count = mem_size / 0x1000 + 1;
+//         // allocate pages
+//         for i in 0..page_count {
+//             let page_addr = i*0x1000 + align_down(virt_addr, 0x1000);
+//             if !regions.contains_key(&page_addr) {
+//                 let layout = Layout::from_size_align_unchecked(0x1000, 0x1000);
+//                 let mut page: [u8; 0x1000] = *(alloc_zeroed(layout) as *mut [u8; 0x1000]);
+//                 regions.insert(page_addr, page);
+//             }
+//         }
+//
+//         // copy over data
+//         let mut working_offset = 0;
+//         let file_data_page_count = file_size / 0x1000 + 1;
+//         for i in 0..file_data_page_count {
+//             let lower_bound = offset + working_offset;
+//             let page_addr = align_down(virt_addr + working_offset, 0x1000);
+//             let write_size = min(page_addr+0x1000, file_size - working_offset + 1);
+//             let lower_bound_offset = lower_bound % 0x1000;
+//             let mut page = regions.get_mut(&page_addr).unwrap();
+//
+//             page[(lower_bound_offset as usize)..((lower_bound_offset+write_size) as usize)]
+//                 .copy_from_slice(
+//                     &file[(lower_bound as usize)..((lower_bound+write_size) as usize)]
+//                 );
+//             working_offset += write_size;
+//         }
+//     }
+//
+//     // map pages
+//     for (virt_addr, page) in regions.iter() {
+//         let phys_addr = mapper.translate_addr(VirtAddr::from_ptr(page.as_ptr()))
+//             .unwrap();
+//         println!("{:2x}", phys_addr.as_u64());
+//         mapper
+//             .map_to(
+//                 Page::<Size4KiB>::from_start_address(VirtAddr::new(*virt_addr)).unwrap(),
+//                 PhysFrame::containing_address(phys_addr),
+//                 PageTableFlags::PRESENT
+//                     | PageTableFlags::WRITABLE
+//                     | PageTableFlags::USER_ACCESSIBLE,
+//                 frame_allocator
+//             )
+//             .unwrap()
+//             .flush();
+//     }
+//
+//     (regions, elf_header.program_entry)
+// }

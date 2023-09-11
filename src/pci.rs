@@ -10,14 +10,14 @@ use crate::pci::DeviceType::{Device, PCIBridge, CardBusBridge};
 static MCFG: OnceCell<MCFGTable> = OnceCell::uninit();
 pub static DEVICES: OnceCell<Vec<&'static DeviceConfigurationSpace>> = OnceCell::uninit();
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct MCFGTable {
     header: &'static SDTHeader,
     entries: &'static [MCFGEntry],
 }
 
 #[repr(C, packed)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct MCFGEntry {
     config_space: u64,
     segment_group: u16,
@@ -42,7 +42,7 @@ pub struct CommandRegister {
     #[bits(5)] _reserved1: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C, packed)]
 pub struct DeviceConfigurationSpace {
     vendor_id: u16,
@@ -75,7 +75,7 @@ pub struct DeviceConfigurationSpace {
     max_latency: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C, packed)]
 struct BaseConfigurationSpace {
     vendor_id: u16,

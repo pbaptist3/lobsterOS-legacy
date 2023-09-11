@@ -15,6 +15,8 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
+
+use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use bootloader::BootInfo;
 #[cfg(test)]
@@ -22,6 +24,9 @@ use bootloader::{entry_point, BootInfo};
 use conquer_once::spin::OnceCell;
 use x86_64::structures::paging::OffsetPageTable;
 use x86_64::VirtAddr;
+use crate::fs::FileSystem;
+use crate::memory::{BootInfoFrameAllocator, LinearFrameAllocator};
+use crate::process::Process;
 use crate::threading::scheduler::SCHEDULER;
 
 pub mod display;
@@ -75,14 +80,19 @@ pub fn init(boot_info: &'static BootInfo) {
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
 
-    // create physical mapping and frame allocator
+    // create physical mapping
     let mut mapper = unsafe { memory::init() };
+
     let mut frame_allocator = unsafe {
-        memory::BootInfoFrameAllocator::init(&boot_info.memory_map)
+        // make a simple allocator to get a kernel heap running
+        let mut simple_allocator = LinearFrameAllocator::init(&boot_info.memory_map);
+
+        // initialize kernel heap
+        allocator::init_heap(&mut mapper, &mut simple_allocator)
+            .expect("Failed to initialize heap");
+
+        BootInfoFrameAllocator::init(&boot_info.memory_map, simple_allocator.get_used())
     };
-    // initialize kernel heap
-    allocator::init_heap(&mut mapper, &mut frame_allocator)
-        .expect("Failed to initialize heap");
     MAPPER.init_once(|| mapper);
 
     acpi::init(boot_info.physical_memory_offset);
@@ -95,6 +105,18 @@ pub fn init(boot_info: &'static BootInfo) {
     let fs_guard = fs::FILE_SYSTEM.lock();
     let fs = fs_guard.as_ref()
         .expect("file system not initialized");
+    let shell = get_bash(fs);
+
+    let process = unsafe {
+        Process::spawn_from_file(&shell, &mut frame_allocator)
+            .unwrap()
+    };
+    let mut scheduler = SCHEDULER.lock();
+    scheduler.push_task(process);
+    scheduler.enable();
+}
+
+fn get_bash(fs: &FileSystem) -> Vec<u8> {
     let bash_file = fs.as_tree()
         .root()
         .iter()
@@ -112,12 +134,7 @@ pub fn init(boot_info: &'static BootInfo) {
         .data();
     let data = bash_file.get_data(MAPPER.get().unwrap())
         .expect("failed to get bash data (corrupted disk?)");
-    let process = unsafe {
-        process::Process::spawn_from_file(&data, &mut frame_allocator)
-    };
-    let mut scheduler = SCHEDULER.lock();
-    scheduler.push_task(process);
-    scheduler.enable();
+    data
 }
 
 /// CPU efficient loop

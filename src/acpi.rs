@@ -31,7 +31,7 @@ pub struct RSDPExtended {
     reserved: [u8; 3],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C, packed)]
 pub struct SDTHeader {
     signature: [u8; 4],
