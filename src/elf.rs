@@ -17,7 +17,7 @@ use x86_64::{align_down, align_up, VirtAddr};
 use crate::elf::ElfVerifyError::{BadMagicNum, Elf32Bit, BadSliceSize, BadEndianness, BadArch};
 use crate::elf::ProgramHeaderType::Load;
 use crate::{MAPPER, println, serial_println};
-use crate::memory::BootInfoFrameAllocator;
+use crate::memory::BuddyAllocator;
 
 const MAGIC_NUM: &[u8; 4] = b"\x7FELF";
 

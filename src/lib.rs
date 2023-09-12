@@ -25,7 +25,7 @@ use conquer_once::spin::OnceCell;
 use x86_64::structures::paging::OffsetPageTable;
 use x86_64::VirtAddr;
 use crate::fs::FileSystem;
-use crate::memory::{BootInfoFrameAllocator, LinearFrameAllocator};
+use crate::memory::{BuddyAllocator, LinearFrameAllocator};
 use crate::process::Process;
 use crate::threading::scheduler::SCHEDULER;
 
@@ -91,7 +91,7 @@ pub fn init(boot_info: &'static BootInfo) {
         allocator::init_heap(&mut mapper, &mut simple_allocator)
             .expect("Failed to initialize heap");
 
-        BootInfoFrameAllocator::init(&boot_info.memory_map, simple_allocator.get_used())
+        BuddyAllocator::init(&boot_info.memory_map, simple_allocator.get_used())
     };
     MAPPER.init_once(|| mapper);
 

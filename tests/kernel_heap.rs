@@ -9,7 +9,7 @@ extern crate alloc;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use lobster::allocator;
-use lobster::memory::{self, BootInfoFrameAllocator};
+use lobster::memory::{self, BuddyAllocator};
 use x86_64::VirtAddr;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -20,7 +20,7 @@ fn main(boot_info: &'static BootInfo) -> ! {
     lobster::init();
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
+    let mut frame_allocator = unsafe { BuddyAllocator::init(&boot_info.memory_map) };
     allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("heap initialization failed");
 

@@ -1,9 +1,13 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
 use x86_64::structures::paging::{FrameAllocator, FrameDeallocator, OffsetPageTable, PageTable, PhysFrame, Size4KiB};
 use x86_64::{PhysAddr, VirtAddr};
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use crate::println;
+
+const MAX_ORDER: usize = 0x100_000;
+
 
 /// Initialize physical memory offset page table
 pub unsafe fn init() -> OffsetPageTable<'static> {
@@ -28,18 +32,22 @@ pub unsafe fn active_level_4_table(physical_memory_offset: u64) -> &'static mut 
 }
 
 /// Allocates frames from bootlaoder's memory map
-pub struct BootInfoFrameAllocator {
+pub struct BuddyAllocator {
     memory_map: &'static MemoryMap,
     frame_iter: Box<dyn Iterator<Item = PhysFrame>>
 }
 
-impl BootInfoFrameAllocator {
+impl BuddyAllocator {
     /// Create a frame allocator from the memory map provides
     ///
     /// Memory map must be valid and all USABLE frames must be truly unused
     pub unsafe fn init(memory_map: &'static MemoryMap, used: usize) -> Self {
+        // get vec of usable frames
         let frame_iter = Self::usable_frames(memory_map);
         let frame_iter = frame_iter.skip(used);
+
+        // create bitmaps
+
         Self {
             memory_map,
             frame_iter: Box::new(frame_iter)
@@ -57,13 +65,13 @@ impl BootInfoFrameAllocator {
     }
 }
 
-unsafe impl FrameAllocator::<Size4KiB> for BootInfoFrameAllocator {
+unsafe impl FrameAllocator::<Size4KiB> for BuddyAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
         self.frame_iter.next()
     }
 }
 
-impl FrameDeallocator::<Size4KiB> for BootInfoFrameAllocator {
+impl FrameDeallocator::<Size4KiB> for BuddyAllocator {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
         todo!()
     }

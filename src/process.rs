@@ -1,4 +1,4 @@
-use crate::memory::BootInfoFrameAllocator;
+use crate::memory::BuddyAllocator;
 
 use crate::{gdt, memory, println, process, serial_println, userspace};
 use alloc::boxed::Box;
